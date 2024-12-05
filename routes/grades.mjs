@@ -175,7 +175,7 @@ router.get("/", async (req, res) => {
   try {
     let collection = await db.collection("grades");
     let result = await collection.find().toArray();
-    res.status(200).send(result); // Send result to the client
+    res.status(200).send(result);
   } catch {
     console.error("Error fetching documents:", error);
     res.status(500).send("Error fetching documents");
@@ -195,13 +195,101 @@ router.get("/stats", async (req, res) => {
       ])
       .toArray();
 
-    console.log(result); // Log result to check the count
-    res.status(200).send(result); // Send result to the client
+    console.log(result);
+    res.status(200).send(result);
   } catch (error) {
     console.error("Error counting documents:", error);
     res.status(500).send("Error counting documents");
   }
 });
+
+// GET /grades/stats/:id
+router.get("/stats/:id", async (req, res) => {
+  const classId = Number(req.params.id);
+  if (isNaN(classId)) {
+    return res.status(400).send({ error: "Invalid class_id" });
+  }
+
+  try {
+    const collection = await db.collection("grades");
+
+    const result = await collection
+      .aggregate([
+        { $match: { class_id: classId } }, // Filter by class_id
+        {
+          $group: {
+            _id: "$learner_id", // Group by learner_id
+            averageScore: { $avg: "$scores.value" }, // Example: average score calculation
+            totalScores: { $sum: "$scores.value" }, // Example: total score calculation
+            scoreCount: { $sum: 1 }, // Count documents
+          },
+        },
+        { $sort: { averageScore: -1 } }, // Sort by averageScore descending
+      ])
+      .toArray();
+
+    res.status(200).send(result);
+  } catch (error) {
+    console.error("Error in stats route:", error);
+    res.status(500).send({ error: "Internal Server Error" });
+  }
+});
+
+// Create indices
+(async () => {
+  try {
+    const collection = await db.collection("grades");
+
+    // Single-field indices
+    await collection.createIndex({ class_id: 1 });
+    await collection.createIndex({ learner_id: 1 });
+
+    // Compound index
+    await collection.createIndex({ learner_id: 1, class_id: 1 });
+
+    console.log("Indices created successfully.");
+  } catch (error) {
+    console.error("Error creating indices:", error);
+  }
+})();
+
+// Set validation rules
+(async () => {
+  try {
+    const adminDb = await db.admin();
+    const validation = {
+      validator: {
+        $jsonSchema: {
+          bsonType: "object",
+          required: ["class_id", "learner_id"],
+          properties: {
+            class_id: {
+              bsonType: "int",
+              minimum: 0,
+              maximum: 300,
+              description: "Must be an integer between 0 and 300.",
+            },
+            learner_id: {
+              bsonType: "int",
+              minimum: 0,
+              description: "Must be an integer greater than or equal to 0.",
+            },
+          },
+        },
+      },
+      validationAction: "warn",
+    };
+
+    await adminDb.command({
+      collMod: "grades",
+      ...validation,
+    });
+
+    console.log("Validation rules updated successfully.");
+  } catch (error) {
+    console.error("Error setting validation rules:", error);
+  }
+})();
 
 // Delete a class
 router.delete("/class/:id", async (req, res) => {
